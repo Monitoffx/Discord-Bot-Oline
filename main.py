@@ -42,6 +42,13 @@ last_welcome = {}
 # Variable global para mantener la conexión de voz
 voice_client = None
 
+# Variables para controlar reconexiones de voz
+voice_reconnect_attempts = 0
+max_voice_reconnect_attempts = 5
+last_voice_reconnect_time = 0
+last_successful_connection = 0
+is_reconnecting = False
+
 @bot.event
 async def on_member_join(member):
     """Envía un mensaje de bienvenida cuando un nuevo miembro se une al servidor."""
@@ -229,12 +236,40 @@ async def on_ready():
     await connect_to_voice_channel()
 
 async def connect_to_voice_channel():
-    """Conecta el bot a un canal de voz específico."""
-    global voice_client
+    """Conecta el bot a un canal de voz específico con sistema conservador de reconexión."""
+    global voice_client, voice_reconnect_attempts, last_voice_reconnect_time, last_successful_connection, is_reconnecting
     
     if VOICE_CHANNEL_ID is None:
         logger.info("No se ha configurado un canal de voz. El bot no se conectará a voz.")
         return
+    
+    # Prevenir reconexiones simultáneas
+    if is_reconnecting:
+        logger.info("Reconexión ya en progreso, esperando...")
+        return
+    
+    current_time = time.time()
+    
+    # Verificar si ya está conectado correctamente
+    if voice_client and voice_client.is_connected() and voice_client.channel.id == VOICE_CHANNEL_ID:
+        if current_time - last_successful_connection < 30:  # Si está conectado y estable por 30 segundos
+            logger.info("Bot ya conectado y estable en el canal de voz")
+            voice_reconnect_attempts = 0
+            is_reconnecting = False
+            return
+    
+    # Controlar frecuencia de reconexiones (mínimo 5 minutos entre intentos)
+    if current_time - last_voice_reconnect_time < 300:
+        logger.warning(f"Esperando antes de intentar reconectar a voz... ({300 - (current_time - last_voice_reconnect_time):.0f}s restantes)")
+        return
+    
+    # Verificar límite de intentos
+    if voice_reconnect_attempts >= max_voice_reconnect_attempts:
+        logger.error(f"Límite de intentos de reconexión de voz alcanzado ({max_voice_reconnect_attempts}). Esperando 1 hora...")
+        voice_reconnect_attempts = 0  # Resetear después de una hora
+        return
+    
+    is_reconnecting = True
     
     try:
         # Buscar el canal de voz en todos los servidores del bot
@@ -247,23 +282,63 @@ async def connect_to_voice_channel():
         
         if voice_channel is None:
             logger.error(f"No se encontró el canal de voz con ID: {VOICE_CHANNEL_ID}")
+            is_reconnecting = False
             return
         
-        # Verificar si ya está conectado
+        # Si está conectado a otro canal, desconectar primero
         if voice_client and voice_client.is_connected():
-            logger.info("El bot ya está conectado a un canal de voz")
-            return
+            await voice_client.disconnect()
+            voice_client = None
+            await asyncio.sleep(2)
+        
+        # Incrementar contador y registrar tiempo
+        voice_reconnect_attempts += 1
+        last_voice_reconnect_time = current_time
+        
+        # Calcular delay con backoff exponencial más agresivo
+        delay = min(10 * voice_reconnect_attempts, 120)  # 10, 20, 40, 80, 120 segundos
+        if voice_reconnect_attempts > 1:
+            logger.info(f"Esperando {delay} segundos antes de conectar (intento #{voice_reconnect_attempts}/{max_voice_reconnect_attempts})")
+            await asyncio.sleep(delay)
         
         # Conectar al canal de voz
         voice_client = await voice_channel.connect()
-        logger.info(f"Conectado al canal de voz: {voice_channel.name}")
+        logger.info(f"Conectado exitosamente al canal de voz: {voice_channel.name}")
         
+        # Resetear contadores y marcar como éxito
+        voice_reconnect_attempts = 0
+        last_successful_connection = current_time
+        is_reconnecting = False
+        
+        # Esperar un momento para asegurar conexión estable
+        await asyncio.sleep(5)
+        
+    except discord.errors.ConnectionClosed as e:
+        if e.code == 4017:
+            logger.error(f"Error 4017 de Discord - Servidores de voz sobrecargados (intento #{voice_reconnect_attempts})")
+            # Para error 4017, esperar mucho más tiempo
+            await asyncio.sleep(min(60, 10 * voice_reconnect_attempts))
+        else:
+            logger.error(f"Conexión de voz cerrada: {e}")
+            await asyncio.sleep(10)
     except discord.Forbidden:
         logger.error("No tengo permisos para conectarme al canal de voz")
+        voice_reconnect_attempts = max_voice_reconnect_attempts  # No reintentar
     except discord.ClientException as e:
-        logger.error(f"Error al conectarse al canal de voz: {e}")
+        if "Already connected to a voice channel" in str(e):
+            logger.warning("Ya conectado a un canal, forzando desconexión...")
+            if voice_client:
+                await voice_client.disconnect(force=True)
+                voice_client = None
+                await asyncio.sleep(5)
+        else:
+            logger.error(f"Error de cliente al conectarse a voz: {e}")
+            await asyncio.sleep(10)
     except Exception as e:
         logger.error(f"Error inesperado al conectar al canal de voz: {e}")
+        await asyncio.sleep(15)
+    finally:
+        is_reconnecting = False
 
 async def check_voice_connection():
     """Verifica y reconecta el bot al canal de voz si es necesario."""
@@ -280,18 +355,32 @@ async def check_voice_connection():
     except Exception as e:
         logger.error(f"Error al verificar conexión de voz: {e}")
 
+# NOTA: Esta función está deshabilitada para evitar bucles de reconexión
+# Para habilitarla, descomenta la siguiente línea y agrégala a un task loop
+# async def voice_monitor_task():
+#     while True:
+#         await check_voice_connection()
+#         await asyncio.sleep(30)  # Verificar cada 30 segundos
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     """Maneja cambios en el estado de voz de los miembros."""
-    global voice_client
+    global voice_client, voice_reconnect_attempts, last_successful_connection
     
     # Si el bot fue desconectado por un administrador
     if member == bot.user and after.channel is None and before.channel is not None:
         logger.warning("El bot fue desconectado del canal de voz")
         voice_client = None
-        # Esperar un momento y reconectar
-        await asyncio.sleep(5)
-        await connect_to_voice_channel()
+        voice_reconnect_attempts = 0  # Resetear contador para permitir reconexión
+        last_successful_connection = 0  # Resetear tiempo de conexión exitosa
+        
+        # Esperar más tiempo antes de reconectar (más conservador)
+        logger.info("Esperando 30 segundos antes de intentar reconectar...")
+        await asyncio.sleep(30)
+        
+        # Intentar reconectar solo si no hay reconexiones en curso
+        if voice_client is None:
+            await connect_to_voice_channel()
 
 # Iniciar el bot
 if __name__ == "__main__":

@@ -28,18 +28,19 @@ class RPCStatus(commands.Cog):
             else:
                 time_str = f"{hours}h {minutes}m"
             
-            # Update bot's status with Vyper Mods RPC
+            # Update bot's status with Vyper Mods RPC - Estado "En sonda"
             activity = discord.Activity(
                 type=discord.ActivityType.playing,
                 name="VyperMods - Bot",
                 details="</> Dev: @kikitieneelbody",
                 state=f"Playing VyperMods - Bot | {time_str}",
                 large_image="https://github.com/Samuel-bit-bot/URLS/releases/download/v1/Logo-VyperMods.png",  # Must be uploaded to Discord Dev Portal
-                large_text="Copyright ©VyperMods - Bot",
+                large_text="Copyright VyperMods - Bot",
                 small_image="https://github.com/Samuel-bit-bot/URLS/releases/download/v1/banner.gif",  # Must be uploaded to Discord Dev Portal
                 small_text="Rogue - Level 100"
             )
-            await self.bot.change_presence(activity=activity)
+            # Establecer estado "En sonda" (idle/afk)
+            await self.bot.change_presence(activity=activity, status=discord.Status.idle)
             
         except Exception as e:
             print(f"Error actualizando el estado: {e}")
