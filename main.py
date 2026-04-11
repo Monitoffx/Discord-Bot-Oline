@@ -3,6 +3,9 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 import asyncio
+import time
+import logging
+from datetime import datetime
 
 # Cargar variables de entorno
 load_dotenv()
@@ -26,8 +29,18 @@ GOODBYE_CHANNEL_ID = 1444541465580540097  # Canal de despedida actualizado
 # ID del rol automático (autorole)
 AUTOROLE_ID = 1428535811850240082  # Cambia esto por el ID del rol que quieres asignar
 
+# ID del canal de voz donde el bot estará conectado
+VOICE_CHANNEL_ID = 1453589053432926440  # Canal de voz configurado por el usuario
+
+# Configuración del logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # Para evitar mensajes duplicados
 last_welcome = {}
+
+# Variable global para mantener la conexión de voz
+voice_client = None
 
 @bot.event
 async def on_member_join(member):
@@ -40,11 +53,11 @@ async def on_member_join(member):
         welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
 
         if welcome_channel is None:
-            print(f"No se pudo encontrar el canal de bienvenida con ID: {WELCOME_CHANNEL_ID}")
+            logger.error(f"No se pudo encontrar el canal de bienvenida con ID: {WELCOME_CHANNEL_ID}")
             return
 
         if not welcome_channel.permissions_for(welcome_channel.guild.me).send_messages:
-            print("No tengo permisos para enviar mensajes en el canal de bienvenida")
+            logger.warning("No tengo permisos para enviar mensajes en el canal de bienvenida")
             return
 
         member_count = member.guild.member_count
@@ -99,43 +112,43 @@ async def on_member_join(member):
         try:
             await mensaje.add_reaction('👋')
         except Exception as e:
-            print(f"Error al agregar reacciones: {e}")
+            logger.warning(f"Error al agregar reacciones: {e}")
 
-        print(f"Mensaje de bienvenida enviado a {member.name}")
+        logger.info(f"Mensaje de bienvenida enviado a {member.name}")
 
         # Asignar rol automático (autorole)
         if AUTOROLE_ID is not None:
             try:
-                print(f"Intentando asignar rol con ID: {AUTOROLE_ID}")
+                logger.info(f"Intentando asignar rol con ID: {AUTOROLE_ID}")
                 role = member.guild.get_role(AUTOROLE_ID)
                 if role is None:
-                    print(f"No se pudo encontrar el rol con ID: {AUTOROLE_ID}")
-                    print(f"Roles disponibles: {[r.name + ' (ID: ' + str(r.id) + ')' for r in member.guild.roles]}")
+                    logger.error(f"No se pudo encontrar el rol con ID: {AUTOROLE_ID}")
+                    logger.info(f"Roles disponibles: {[r.name + ' (ID: ' + str(r.id) + ')' for r in member.guild.roles]}")
                 else:
-                    print(f"Rol encontrado: '{role.name}' (ID: {role.id})")
-                    print(f"Bot tiene permisos: {member.guild.me.guild_permissions.manage_roles}")
-                    print(f"Posición del bot: {member.guild.me.top_role.position}")
-                    print(f"Posición del rol: {role.position}")
-                    print(f"Roles actuales del miembro: {[r.name for r in member.roles]}")
+                    logger.info(f"Rol encontrado: '{role.name}' (ID: {role.id})")
+                    logger.info(f"Bot tiene permisos: {member.guild.me.guild_permissions.manage_roles}")
+                    logger.info(f"Posición del bot: {member.guild.me.top_role.position}")
+                    logger.info(f"Posición del rol: {role.position}")
+                    logger.info(f"Roles actuales del miembro: {[r.name for r in member.roles]}")
 
                     # Verificar si ya tiene el rol
                     if role in member.roles:
-                        print(f"El miembro ya tiene el rol '{role.name}', pero se verificará nuevamente")
+                        logger.info(f"El miembro ya tiene el rol '{role.name}', pero se verificará nuevamente")
 
                     await member.add_roles(role, reason="Autorole automático")
-                    print(f"Rol '{role.name}' asignado exitosamente a {member.name}")
+                    logger.info(f"Rol '{role.name}' asignado exitosamente a {member.name}")
             except discord.Forbidden as e:
-                print(f"Error de permisos al asignar rol: {e}")
-                print(f"Bot tiene permiso manage_roles: {member.guild.me.guild_permissions.manage_roles}")
+                logger.error(f"Error de permisos al asignar rol: {e}")
+                logger.error(f"Bot tiene permiso manage_roles: {member.guild.me.guild_permissions.manage_roles}")
             except discord.HTTPException as e:
-                print(f"Error HTTP al asignar rol: {e}")
+                logger.error(f"Error HTTP al asignar rol: {e}")
             except Exception as e:
-                print(f"Error inesperado al asignar rol: {e}")
+                logger.error(f"Error inesperado al asignar rol: {e}")
                 import traceback
                 traceback.print_exc()
 
     except Exception as e:
-        print(f"Error al enviar mensaje de bienvenida: {e}")
+        logger.error(f"Error al enviar mensaje de bienvenida: {e}")
 
         # Asegúrate de que 'bot' sea el nombre de tu instancia de comandos (commands.Bot o discord.Client)
 @bot.event
@@ -153,19 +166,19 @@ async def on_member_remove(member):
         
         if goodbye_channel is None:
             # Puedes usar member.guild.name si no se encuentra el canal, para saber de qué servidor viene el error
-            print(f"No se pudo encontrar el canal de despedida con ID: {GOODBYE_CHANNEL_ID} en el servidor {member.guild.name}.")
+            logger.error(f"No se pudo encontrar el canal de despedida con ID: {GOODBYE_CHANNEL_ID} en el servidor {member.guild.name}.")
             return
             
         # Verificar permisos
         if not goodbye_channel.permissions_for(goodbye_channel.guild.me).send_messages:
-            print(f"No tengo permisos para enviar mensajes en el canal de despedida: {goodbye_channel.name}")
+            logger.warning(f"No tengo permisos para enviar mensajes en el canal de despedida: {goodbye_channel.name}")
             return
         
         # Crear mensaje de despedida (Completando tu código)
         embed = discord.Embed(
             title=f"**👋 𝗔𝗗𝗜𝗢𝗦 𝗗𝗘 𝗩𝗬𝗣𝗘𝗥 𝗠𝗢𝗗𝗦 👋**",
             description=f"**{member.mention}** Ojala no vuelvas",
-            color=discord.Color.dark_red(),
+            color=discord.Color.blue(),
             timestamp=discord.utils.utcnow()
         )
         
@@ -196,31 +209,154 @@ async def on_member_remove(member):
         await goodbye_channel.send(embed=embed)
 
     except Exception as e:
-        print(f"Error general al procesar on_member_remove para {member.display_name}: {e}")
+        logger.error(f"Error general al procesar on_member_remove para {member.display_name}: {e}")
 
 @bot.event
 async def on_ready():
-    print(f'Bot conectado como {bot.user.name}')
+    logger.info(f'Bot conectado como {bot.user.name}')
+    logger.info(f'Bot está en {len(bot.guilds)} servidores')
     
     # Cargar extensiones
     EXTENSIONS = ['rpc_status']
     for extension in EXTENSIONS:
         try:
             await bot.load_extension(extension)
-            print(f"Extensión cargada: {extension}")
+            logger.info(f"Extensión cargada: {extension}")
         except Exception as e:
-            print(f"Error al cargar {extension}: {e}")
+            logger.error(f"Error al cargar {extension}: {e}")
+    
+    # Conectar al canal de voz si está configurado
+    await connect_to_voice_channel()
+
+async def connect_to_voice_channel():
+    """Conecta el bot a un canal de voz específico."""
+    global voice_client
+    
+    if VOICE_CHANNEL_ID is None:
+        logger.info("No se ha configurado un canal de voz. El bot no se conectará a voz.")
+        return
+    
+    try:
+        # Buscar el canal de voz en todos los servidores del bot
+        voice_channel = None
+        for guild in bot.guilds:
+            channel = guild.get_channel(VOICE_CHANNEL_ID)
+            if channel and hasattr(channel, 'voice_states'):  # Es un canal de voz
+                voice_channel = channel
+                break
+        
+        if voice_channel is None:
+            logger.error(f"No se encontró el canal de voz con ID: {VOICE_CHANNEL_ID}")
+            return
+        
+        # Verificar si ya está conectado
+        if voice_client and voice_client.is_connected():
+            logger.info("El bot ya está conectado a un canal de voz")
+            return
+        
+        # Conectar al canal de voz
+        voice_client = await voice_channel.connect()
+        logger.info(f"Conectado al canal de voz: {voice_channel.name}")
+        
+    except discord.Forbidden:
+        logger.error("No tengo permisos para conectarme al canal de voz")
+    except discord.ClientException as e:
+        logger.error(f"Error al conectarse al canal de voz: {e}")
+    except Exception as e:
+        logger.error(f"Error inesperado al conectar al canal de voz: {e}")
+
+async def check_voice_connection():
+    """Verifica y reconecta el bot al canal de voz si es necesario."""
+    global voice_client
+    
+    if VOICE_CHANNEL_ID is None:
+        return
+    
+    try:
+        # Si no está conectado o la conexión se perdió
+        if not voice_client or not voice_client.is_connected():
+            logger.warning("Conexión de voz perdida, intentando reconectar...")
+            await connect_to_voice_channel()
+    except Exception as e:
+        logger.error(f"Error al verificar conexión de voz: {e}")
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    """Maneja cambios en el estado de voz de los miembros."""
+    global voice_client
+    
+    # Si el bot fue desconectado por un administrador
+    if member == bot.user and after.channel is None and before.channel is not None:
+        logger.warning("El bot fue desconectado del canal de voz")
+        voice_client = None
+        # Esperar un momento y reconectar
+        await asyncio.sleep(5)
+        await connect_to_voice_channel()
 
 # Iniciar el bot
 if __name__ == "__main__":
     TOKEN = os.getenv('DISCORD_TOKEN')
     if not TOKEN:
-        print("Error: No se encontró el token de Discord en las variables de entorno")
-    else:
-        while True:
+        logger.error("Error: No se encontró el token de Discord en las variables de entorno")
+        exit(1)
+    
+    # Sistema de reconexión robusto
+    reconnect_attempts = 0
+    max_reconnect_attempts = 10
+    base_delay = 5  # segundos
+    
+    while True:
+        try:
+            if reconnect_attempts > 0:
+                delay = min(base_delay * (2 ** reconnect_attempts), 300)  # Máximo 5 minutos
+                logger.info(f"Reiniciando bot en {delay} segundos (intento #{reconnect_attempts})...")
+                time.sleep(delay)
+            
+            logger.info("Iniciando bot...")
+            reconnect_attempts = 0  # Resetear contador cuando el inicio es exitoso
+            
+            # Crear un nuevo bucle de eventos para evitar problemas
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
             try:
-                print("Iniciando bot...")
-                bot.run(TOKEN)
+                loop.run_until_complete(bot.start(TOKEN))
+            except KeyboardInterrupt:
+                logger.info("Bot detenido por el usuario")
+                break
+            except discord.errors.ConnectionClosed as e:
+                logger.error(f"Conexión cerrada: {e}")
+                reconnect_attempts += 1
+                if reconnect_attempts >= max_reconnect_attempts:
+                    logger.error("Máximo número de intentos de reconexión alcanzado")
+                    break
+                continue
+            except discord.errors.HTTPException as e:
+                logger.error(f"Error HTTP: {e}")
+                reconnect_attempts += 1
+                if reconnect_attempts >= max_reconnect_attempts:
+                    logger.error("Máximo número de intentos de reconexión alcanzado")
+                    break
+                continue
             except Exception as e:
-                print(f"Bot desconectado: {e}")
-                print("Reiniciando en 10 segundos...")
+                logger.error(f"Error inesperado: {e}")
+                reconnect_attempts += 1
+                if reconnect_attempts >= max_reconnect_attempts:
+                    logger.error("Máximo número de intentos de reconexión alcanzado")
+                    break
+                continue
+            finally:
+                loop.close()
+                
+        except KeyboardInterrupt:
+            logger.info("Bot detenido por el usuario")
+            break
+        except Exception as e:
+            logger.error(f"Error crítico: {e}")
+            reconnect_attempts += 1
+            if reconnect_attempts >= max_reconnect_attempts:
+                logger.error("Máximo número de intentos de reconexión alcanzado")
+                break
+            continue
+    
+    logger.info("Programa finalizado")
